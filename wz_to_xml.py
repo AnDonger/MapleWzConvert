@@ -14,14 +14,11 @@ from __future__ import annotations
 import argparse
 import base64
 from datetime import datetime
-import io
-import os
 from pathlib import Path, PurePosixPath
 import subprocess
 import sys
 from typing import Any
 from xml.sax.saxutils import quoteattr
-import zlib
 
 
 WZPY_REPO = "https://github.com/Leonana69/wz-python.git"
@@ -145,135 +142,6 @@ def _read_image_body(image: Any) -> bytes:
     return data
 
 
-def _decode_legacy_chunked_canvas(prop: Any):
-    from PIL import Image
-    from wzpy.canvas import _decode_pixels
-
-    raw = _read_canvas_bytes(prop)
-    fmt = prop.format + prop.format2
-    attempts: list[tuple[str, bytes, bool]] = []
-
-    def add_attempt(name: str, payload: bytes, infer_geometry: bool = False) -> None:
-        if payload:
-            attempts.append((name, payload, infer_geometry))
-            if len(payload) > 1 and payload[0] == 0:
-                attempts.append((name + "-skip-leading-zero", payload[1:], infer_geometry))
-
-    def zlib_lenient(data: bytes, wbits: int = zlib.MAX_WBITS) -> bytes:
-        decompressor = zlib.decompressobj(wbits)
-        return decompressor.decompress(data) + decompressor.flush()
-
-    def dechunk(start: int) -> bytes:
-        pos = start
-        chunks = bytearray()
-        while pos + 4 <= len(raw):
-            chunk_len = int.from_bytes(raw[pos:pos + 4], "little")
-            pos += 4
-            if chunk_len <= 0 or pos + chunk_len > len(raw):
-                raise ValueError(
-                    f"bad legacy chunk length {chunk_len} at offset {pos - 4}"
-                )
-            chunks += raw[pos:pos + chunk_len]
-            pos += chunk_len
-        if any(raw[pos:]):
-            raise ValueError(f"non-zero trailing bytes after offset {pos}")
-        return bytes(chunks)
-
-    add_attempt("raw", raw)
-    if len(raw) > 2:
-        add_attempt("raw-skip2", raw[2:])
-
-    for start in (0, 2):
-        try:
-            add_attempt(f"legacy-chunks-start{start}", dechunk(start))
-        except ValueError:
-            pass
-
-    for offset in range(min(16, len(raw))):
-        add_attempt(f"offset{offset}", raw[offset:], infer_geometry=True)
-
-    def inferred_image(pixels: bytes) -> Image.Image:
-        candidate_formats = []
-        if fmt in (1, 2, 257, 513, 517):
-            candidate_formats.append(fmt)
-        candidate_formats.extend(candidate for candidate in (1, 2, 257, 513) if candidate not in candidate_formats)
-
-        errors: list[str] = []
-        for candidate_fmt in candidate_formats:
-            bytes_per_pixel = 4 if candidate_fmt == 2 else 2
-            if len(pixels) % bytes_per_pixel:
-                continue
-
-            pixel_count = len(pixels) // bytes_per_pixel
-            if pixel_count <= 0:
-                continue
-
-            dimensions: set[tuple[int, int]] = set()
-            width = prop.width if isinstance(prop.width, int) else 0
-            height = prop.height if isinstance(prop.height, int) else 0
-
-            if width > 0 and height > 0 and width * height == pixel_count:
-                dimensions.add((width, height))
-            if width > 0 and pixel_count % width == 0:
-                dimensions.add((width, pixel_count // width))
-            if height > 0 and pixel_count % height == 0:
-                dimensions.add((pixel_count // height, height))
-
-            for candidate_width in range(1, int(pixel_count**0.5) + 1):
-                if pixel_count % candidate_width == 0:
-                    candidate_height = pixel_count // candidate_width
-                    dimensions.add((candidate_width, candidate_height))
-                    dimensions.add((candidate_height, candidate_width))
-
-            if width > 0 and height > 0:
-                key = lambda item: abs(item[0] - width) + abs(item[1] - height)
-            else:
-                key = lambda item: abs(item[0] - item[1])
-
-            for image_width, image_height in sorted(dimensions, key=key):
-                if image_width <= 0 or image_height <= 0:
-                    continue
-                if image_width > 4096 or image_height > 4096:
-                    continue
-                try:
-                    return _decode_pixels(pixels, image_width, image_height, candidate_fmt)
-                except Exception as exc:  # noqa: BLE001 - try inferred candidates.
-                    errors.append(
-                        f"fmt={candidate_fmt} size={image_width}x{image_height}: {exc}"
-                    )
-
-        raise ValueError("could not infer canvas geometry: " + " | ".join(errors[:20]))
-
-    errors: list[str] = []
-    for name, payload, infer_geometry in attempts:
-        for zlib_name, zlib_payload in (
-            ("zlib", payload),
-            ("zlib-skip2", payload[2:] if len(payload) > 2 else b""),
-            ("raw-deflate", payload),
-        ):
-            if not zlib_payload:
-                continue
-            try:
-                wbits = -zlib.MAX_WBITS if zlib_name == "raw-deflate" else zlib.MAX_WBITS
-                pixels = zlib_lenient(zlib_payload, wbits=wbits)
-                try:
-                    return _decode_pixels(pixels, prop.width, prop.height, fmt)
-                except Exception:
-                    if infer_geometry:
-                        return inferred_image(pixels)
-                    raise
-            except Exception as exc:  # noqa: BLE001 - try all legacy variants.
-                errors.append(f"{name}/{zlib_name}: {exc}")
-
-    raise ValueError("legacy v83 canvas fallback failed: " + " | ".join(errors))
-
-
-def _canvas_rawdata(prop: Any) -> str:
-    if not prop.has_pixels():
-        return ""
-    return base64.b64encode(_read_canvas_bytes(prop)).decode("ascii")
-
-
 def _read_sound_bytes(prop: Any) -> bytes:
     if getattr(prop, "_data", None) is not None:
         return prop._data
@@ -288,32 +156,11 @@ def _read_sound_bytes(prop: Any) -> bytes:
     return data
 
 
-def _canvas_png(prop: Any, region: str) -> tuple[str, int, int]:
-    from wzpy.canvas import decode_canvas
-
-    if not prop.has_pixels():
-        return "", max(0, prop.width), max(0, prop.height)
-
-    try:
-        image = decode_canvas(prop, region=region)
-    except Exception:
-        image = _decode_legacy_chunked_canvas(prop)
-
-    buffer = io.BytesIO()
-    image.save(buffer, format="PNG")
-    return base64.b64encode(buffer.getvalue()).decode("ascii"), image.width, image.height
-
-
 def _property_to_xml(
     prop: Any,
     *,
     indent: int,
-    region: str,
-    canvas_data: str,
-    include_canvas_format: bool,
-    logger: ExportLogger | None,
     context: str,
-    strict_canvas_errors: bool,
 ) -> str:
     from wzpy.properties import (
         WzCanvasProperty,
@@ -336,40 +183,17 @@ def _property_to_xml(
         return f'{pad}<{tag} {name_attr} x="{prop.x}" y="{prop.y}"/>'
 
     if isinstance(prop, WzCanvasProperty):
-        canvas_width = prop.width
-        canvas_height = prop.height
-        basedata = None
-        rawdata = None
-
-        if canvas_data in {"raw", "both"}:
-            rawdata = _canvas_rawdata(prop)
-
-        if canvas_data in {"png", "both"}:
-            try:
-                basedata, canvas_width, canvas_height = _canvas_png(prop, region)
-            except Exception as exc:  # noqa: BLE001 - keep the .img exportable.
-                if logger is not None:
-                    logger.warning(f"{context}: canvas basedata export failed: {exc}")
-                if strict_canvas_errors:
-                    raise
-                basedata = ""
-
+        raw = _read_canvas_bytes(prop) if prop.has_pixels() else b""
         attrs = [
             name_attr,
-            f'width="{canvas_width}"',
-            f'height="{canvas_height}"',
+            f'width="{prop.width}"',
+            f'height="{prop.height}"',
+            f'format="{prop.format}"',
+            f'format2="{prop.format2}"',
         ]
-        if canvas_data in {"raw", "both"}:
-            attrs.append(f'format="{prop.format}"')
-            attrs.append(f'format2="{prop.format2}"')
-        elif include_canvas_format:
-            attrs.append(f'format="{prop.format}"')
-            attrs.append(f'format2="{prop.format2}"')
-        if basedata is not None:
-            attrs.append(f"basedata={quoteattr(basedata)}")
-        if rawdata is not None:
-            attrs.append(f'rawlength="{len(_read_canvas_bytes(prop))}"')
-            attrs.append(f"rawdata={quoteattr(rawdata)}")
+        if raw:
+            attrs.append(f'rawlength="{len(raw)}"')
+            attrs.append(f"rawdata={quoteattr(base64.b64encode(raw).decode('ascii'))}")
 
         if not prop.has_children():
             return f"{pad}<{tag} {' '.join(attrs)}/>"
@@ -378,12 +202,7 @@ def _property_to_xml(
             _property_to_xml(
                 child,
                 indent=indent + 1,
-                region=region,
-                canvas_data=canvas_data,
-                include_canvas_format=include_canvas_format,
-                logger=logger,
                 context=f"{context}/{child.name}",
-                strict_canvas_errors=strict_canvas_errors,
             )
             for child in prop.children()
         )
@@ -416,12 +235,7 @@ def _property_to_xml(
             _property_to_xml(
                 child,
                 indent=indent + 1,
-                region=region,
-                canvas_data=canvas_data,
-                include_canvas_format=include_canvas_format,
-                logger=logger,
                 context=f"{context}/{child.name}",
-                strict_canvas_errors=strict_canvas_errors,
             )
             for child in prop.children()
         )
@@ -437,12 +251,7 @@ def _property_to_xml(
 def image_to_server_xml(
     image: Any,
     *,
-    region: str,
-    canvas_data: str,
-    include_canvas_format: bool,
-    logger: ExportLogger | None,
     image_context: str,
-    strict_canvas_errors: bool,
 ) -> str:
     raw_body = _read_image_body(image)
     image.parse()
@@ -450,12 +259,7 @@ def image_to_server_xml(
         _property_to_xml(
             child,
             indent=1,
-            region=region,
-            canvas_data=canvas_data,
-            include_canvas_format=include_canvas_format,
-            logger=logger,
             context=f"{image_context}/{child.name}",
-            strict_canvas_errors=strict_canvas_errors,
         )
         for child in image.children()
     )
@@ -540,10 +344,7 @@ def export_wz_file(
     version: int | None,
     entry: str | None,
     limit: int | None,
-    canvas_data: str,
-    include_canvas_format: bool,
     stop_on_error: bool,
-    strict_canvas_errors: bool,
     logger: ExportLogger,
 ) -> tuple[int, int]:
     from wzpy import WzFile
@@ -572,12 +373,7 @@ def export_wz_file(
                 context = f"{wz_path.name}/{rel_path}"
                 xml_text = image_to_server_xml(
                     image,
-                    region=region,
-                    canvas_data=canvas_data,
-                    include_canvas_format=include_canvas_format,
-                    logger=logger,
                     image_context=context,
-                    strict_canvas_errors=strict_canvas_errors,
                 )
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(xml_text, encoding="utf-8", newline="\n")
@@ -616,34 +412,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--entry", help="Export one .img path inside each .wz.")
     parser.add_argument("--limit", type=int, help="Export only the first N .img files.")
     parser.add_argument(
-        "--canvas-data",
-        choices=("raw", "png", "both", "none"),
-        default="raw",
-        help=(
-            "Canvas export mode. raw preserves the original WZ canvas payload "
-            "as rawdata; png writes decoded PNG basedata; both writes both. "
-            "Default: raw."
-        ),
-    )
-    parser.add_argument(
-        "--skip-canvas-data",
-        action="store_true",
-        help="Deprecated alias for --canvas-data none.",
-    )
-    parser.add_argument(
-        "--include-canvas-format",
-        action="store_true",
-        help="Also write raw canvas format and format2 attributes.",
-    )
-    parser.add_argument(
         "--stop-on-error",
         action="store_true",
         help="Stop when one .img fails instead of continuing.",
-    )
-    parser.add_argument(
-        "--strict-canvas-errors",
-        action="store_true",
-        help="Treat one failed canvas basedata export as a failed .img.",
     )
     parser.add_argument(
         "--logs-dir",
@@ -673,7 +444,6 @@ def main(argv: list[str] | None = None) -> int:
     output_dir = Path(args.output).expanduser().resolve()
     logs_dir = (args.logs_dir or (output_dir / "_logs")).expanduser().resolve()
     version = None if args.auto_version else args.version
-    canvas_data = "none" if args.skip_canvas_data else args.canvas_data
     wz_files = _iter_wz_files(input_path)
 
     if not wz_files:
@@ -687,7 +457,6 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Input: {input_path}")
         print(f"Output: {output_dir}")
         print(f"Region: {args.region}, version: {version}")
-        print(f"Canvas data: {canvas_data}")
         print(f"WZ files: {len(wz_files)}")
 
         for wz_path in wz_files:
@@ -698,10 +467,7 @@ def main(argv: list[str] | None = None) -> int:
                 version=version,
                 entry=args.entry,
                 limit=args.limit,
-                canvas_data=canvas_data,
-                include_canvas_format=args.include_canvas_format,
                 stop_on_error=args.stop_on_error,
-                strict_canvas_errors=args.strict_canvas_errors,
                 logger=logger,
             )
             total_exported += exported

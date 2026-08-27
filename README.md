@@ -34,27 +34,15 @@ out_wz_to_xml\Map.wz\Map\Map0\000000000.img.xml
 Defaults are `--region GMS --version 83`. Use `--auto-version` if the file
 does not open with version 83.
 
-Canvas data defaults to raw WZ payload export:
-
-```powershell
-python wz_to_xml.py ./original_wz ./out_wz_to_xml --canvas-data raw
-```
-
-In `raw` mode, canvas nodes keep the parsed WZ values exactly as read, including
-`width`, `height`, `format`, and `format2`, and write the original canvas
-payload as `rawdata` plus `rawlength`. The script does not decode it to PNG and
+Canvas nodes keep the parsed WZ values exactly as read, including `width`,
+`height`, `format`, and `format2`, and write the original canvas payload as
+`rawdata` plus `rawlength`. The script does not decode canvas data to PNG and
 does not infer or repair canvas dimensions.
 
 Each exported `.img.xml` root also includes `wz_rawbody`, the original `.img`
 body bytes from the WZ archive. The packer reads XML and rebuilds a WZ package
 from those exported XML files; it does not copy the original `.wz` file as the
 packing result.
-
-If you need private-server PNG `basedata`, use:
-
-```powershell
-python wz_to_xml.py ./original_wz ./out_wz_to_xml --canvas-data png
-```
 
 Each export creates error logs under `<output>\_logs`:
 
@@ -73,17 +61,14 @@ Use the latest log when checking the newest run:
 Select-String ./out_wz_to_xml/_logs/wz_export_latest.log" -Pattern "\[WARNING\]|\[ERROR\]|\[SUMMARY\]"
 ```
 
-PNG mode may write a warning if a canvas cannot be decoded to PNG. Raw mode
-does not decode canvas images, so those PNG decode warnings are not produced.
-Use `--strict-canvas-errors` if you want PNG decode warnings to fail the whole
-`.img`.
+Canvas images are not decoded, so PNG decode warnings are not produced.
 
 ## Pack XML Folder Back to WZ
 
 Pack a folder such as `Map.wz` back into a legacy `.wz` file:
 
 ```powershell
-python xml_to_wz.py ./out_wz_to_xml/Map.wz ./out_xml_to_wz/Map.wz
+python xml_to_wz.py ./out_wz_to_xml/String.wz ./out_xml_to_wz/String.wz
 ```
 
 When `_wz_meta.xml` is present, the packer reuses header, checksum, directory
