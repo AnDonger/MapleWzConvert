@@ -1,0 +1,60 @@
+# Covers JetBrains IDEs: IntelliJ, RubyMine, PhpStorm, AppCode, PyCharm, CLion, Android Studio, WebStorm and Rider
+# Reference: https://intellij-support.jetbrains.com/hc/en-us/articles/206544839
+
+/.idea
+
+# Gradle and Maven with auto-import
+# When using Gradle or Maven with auto-import, you should exclude module files,
+# since they will be recreated, and may cause churn.  Uncomment if using
+# auto-import.
+# .idea/artifacts
+# .idea/compiler.xml
+# .idea/jarRepositories.xml
+# .idea/modules.xml
+# .idea/*.iml
+# .idea/modules
+# *.iml
+# *.ipr
+
+# Mongo Explorer plugin
+# .idea/**/mongoSettings.xml
+
+# File-based project format
+*.iws
+
+# IntelliJ
+/.vscode
+/.settings
+/.buildpath
+/.project
+# mpeltonen/sbt-idea plugin
+
+# JIRA plugin
+atlassian-ide-plugin.xml
+
+
+# Crashlytics plugin (for Android Studio and IntelliJ)
+com_crashlytics_export_strings.xml
+crashlytics.properties
+crashlytics-build.properties
+fabric.properties
+
+*.log
+*.cfg
+composer.phar
+composer.lock
+.DS_Store
+Thumbs.db
+/.venv
+/log
+/auth
+/out_*
+/original_wz
+
+# 忽略所有 Python 编译文件
+*.pyc
+__pycache__/
+
+# 忽略所有包含 test 的文件和文件夹（不区分大小写）
+**/*[tT][eE][sS][tT]*/
+**/*[tT][eE][sS][tT]*
