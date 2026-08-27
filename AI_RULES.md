@@ -10,6 +10,16 @@
   original `.img` body bytes needed for no-edit round-trip packing.
 - 导出的 XML 必须表达原 WZ 解析出来的数据，同时保留未修改往返打包所需的
   `.img` 原始 body 字节。
+- XML packing must default to rebuilding valid `<imgdir>` files from XML node
+  content. Exported raw body backup data may be used only by an explicit raw
+  round-trip option, because otherwise user edits would be ignored.
+- XML 打包默认必须按合法 `<imgdir>` 的 XML 节点内容重建。导出的原始 body 备份数据
+  只能通过显式原样往返选项使用，否则会导致用户修改被忽略。
+- When rebuilding an image body, recalculate that image directory entry's
+  checksum from the actual output bytes. Do not reuse stale exported checksums
+  after XML edits.
+- 重建 `.img` body 时，必须按实际输出字节重新计算该 image 目录项 checksum。
+  XML 修改后不得复用导出时的旧 checksum。
 - Do not repair, normalize, reinterpret, or replace source data because it looks
   invalid, inconvenient, or not server/client friendly.
 - 不允许因为数据看起来不合法、不方便、或不适合服务端/客户端，就擅自修复、

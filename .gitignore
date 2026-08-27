@@ -49,6 +49,8 @@ Thumbs.db
 /log
 /auth
 /out_*
+/pack_*
+/verify_*
 /original_wz
 
 # 忽略所有 Python 编译文件

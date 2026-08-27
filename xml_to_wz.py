@@ -5,8 +5,9 @@ Input is usually a folder named like ``Map.wz`` containing files such as:
     Tile/blackTile.img.xml
     Map/Map0/000000000.img.xml
 
-For byte-preserving canvas payloads, use XML produced by
-``wz_to_server_xml.py --canvas-data raw``.
+By default, valid ``<imgdir>`` XML is rebuilt from its node content so edits to
+values or child nodes are written into the new WZ. The exported ``wz_rawbody``
+attribute is kept as a backup for explicit raw round-trip mode only.
 """
 
 from __future__ import annotations
@@ -395,6 +396,7 @@ def build_wz_from_xml(
     version: int,
     copyright: str,
     fstart: int,
+    use_wz_rawbody: bool,
     logger: PackLogger,
 ) -> int:
     from wzpy.crypto import WzKey, compute_version_hash
@@ -430,8 +432,12 @@ def build_wz_from_xml(
             except ET.ParseError:
                 _set_raw_image_body(image, raw_file_bytes)
             else:
-                raw_body = _decode_base64_attr(root_element, "wz_rawbody")
-                if raw_body:
+                raw_body = (
+                    _decode_base64_attr(root_element, "wz_rawbody")
+                    if use_wz_rawbody
+                    else b""
+                )
+                if use_wz_rawbody and raw_body:
                     _set_raw_image_body(image, raw_body)
                 elif root_element.tag.lower() != "imgdir":
                     _set_raw_image_body(image, raw_file_bytes)
@@ -486,6 +492,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--template-wz",
         type=Path,
         help="Optional source .wz whose copyright/fstart should be reused.",
+    )
+    parser.add_argument(
+        "--use-wz-rawbody",
+        action="store_true",
+        help=(
+            "Use exported wz_rawbody bytes instead of rebuilding valid <imgdir> XML. "
+            "This is for no-edit raw round-trip checks; XML node edits are ignored."
+        ),
     )
     parser.add_argument(
         "--logs-dir",
@@ -549,6 +563,7 @@ def main(argv: list[str] | None = None) -> int:
                 version=args.version,
                 copyright=copyright,
                 fstart=fstart,
+                use_wz_rawbody=args.use_wz_rawbody,
                 logger=logger,
             )
         except Exception as exc:  # noqa: BLE001 - CLI should fail cleanly.
