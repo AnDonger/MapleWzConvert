@@ -39,3 +39,4 @@
 - Logs should contain only warnings/errors. Normal progress belongs in the
   console output.
 - 日志只记录 warning/error。正常进度只输出到控制台。
+- AI 测试用目录 ai_test_data，此目录内测试过后的文件以及数据无需AI清理。
