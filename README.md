@@ -69,7 +69,7 @@ Canvas images are not decoded, so PNG decode warnings are not produced.
 Pack a folder such as `Map.wz` back into a legacy `.wz` file:
 
 ```powershell
-python xml_to_wz.py ./out_wz_to_xml/String.wz ./out_xml_to_wz/String.wz
+python xml_to_wz.py ./pack_en_to_cn_xml/Quest.wz ./out_xml_to_wz/Quest.wz
 ```
 
 When `_wz_meta.xml` is present, the packer reuses header, checksum, directory
@@ -115,8 +115,47 @@ warnings/errors.
 Pack a folder such as `wz_to_img/Map.wz` back into a `.wz` file:
 
 ```powershell
-python img_to_wz.py ./out_wz_to_img/Map.wz ./out_img_to_wz/Map.wz
+python img_to_wz.py ./out_wz_to_img/String.wz ./out_img_to_wz/String.wz
 ```
 
 This packer reads each `.img` file as raw bytes. It does not parse, validate,
 repair, normalize, or reinterpret `.img` content before writing it into the WZ.
+
+## Replace English XML Text with Chinese XML Text
+
+Replace only matching `<string name="..." value="..."/>` values from Chinese
+XML into English XML while preserving the English directory layout:
+
+```powershell
+python en_to_cn_xml.py ./pack_en_xml ./pack_cn_xml ./pack_en_to_cn_xml
+```
+
+Matching uses the same relative XML path plus the same `imgdir` path and
+`string name`. The English XML is kept as the base file; the script only
+replaces the matched `value` attribute text and does not reformat XML, rewrite
+empty tags, change unrelated fields, or change line endings.
+
+Only Chinese `value` text that contains real Han characters is used. Values
+that look like garbled text such as `????` are skipped and treated as missing.
+
+`String.wz/Skill.img.xml` has extra display handling for the old client/tool UI.
+Long `desc` segments are wrapped with literal `\n`, preferring punctuation such
+as `，` or `。` as the line break point when it does not increase the total line
+count, and falling back to a 17-character limit. `h1`, `h2`, `h3` style hint
+values are dynamically padded with one trailing space for each Chinese/full-width
+character in the value. This special handling is only applied to `Skill.img.xml`.
+
+Files and nodes missing from the Chinese XML are listed in:
+
+```text
+out_en_to_cn_xml\missing_cn_string_values.txt
+```
+
+The missing report is grouped by WZ and XML file, and only lists the unmatched
+`<imgdir name="...">` entries, for example:
+
+```text
+Quest.wz
+	Quest.wz/A.img.xml
+		<imgdir name="123456">
+```
