@@ -127,7 +127,7 @@ def _xml_tag(prop: Any) -> str:
 
 
 XML_HASH_ATTR = "wz_xmlsha256"
-XML_RAW_METADATA_ATTRS = {"wz_rawlength", "wz_rawbody", XML_HASH_ATTR}
+XML_METADATA_ATTRS = {"wz_rawlength", XML_HASH_ATTR}
 
 
 def _hash_element(
@@ -139,7 +139,7 @@ def _hash_element(
     digest.update(tag.encode("utf-8"))
     digest.update(b"\0")
     for key, value in sorted(attrs.items()):
-        if key in XML_RAW_METADATA_ATTRS:
+        if key in XML_METADATA_ATTRS:
             continue
         digest.update(key.encode("utf-8"))
         digest.update(b"=")
@@ -374,8 +374,7 @@ def image_to_server_xml(
     return (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
         f"<imgdir name={quoteattr(image.name)} wz_rawlength=\"{len(raw_body)}\" "
-        f'{XML_HASH_ATTR}="{edit_hash}" '
-        f"wz_rawbody={quoteattr(base64.b64encode(raw_body).decode('ascii'))}>\n"
+        f'{XML_HASH_ATTR}="{edit_hash}">\n'
         f"{body}\n"
         "</imgdir>\n"
     )

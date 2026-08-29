@@ -38,13 +38,12 @@ Canvas nodes keep the parsed WZ values exactly as read, including `width`,
 `height`, `format`, and `format2`, and write the original canvas payload as
 `rawdata` plus `rawlength`. The script does not decode canvas data to PNG and
 does not infer or repair canvas dimensions.
+After parser changes, previously exported XML should be exported again before
+packing; old XML keeps whatever canvas bytes were written by that earlier run.
 
-Each exported `.img.xml` root also includes `wz_rawbody`, the original `.img`
-body bytes from the WZ archive, and `wz_xmlsha256`, a hash of the editable XML
-nodes. XML packing uses these per-image values to keep unmodified `.img`
-bodies byte-for-byte intact while rebuilding only the `.img.xml` files whose
-editable XML content changed. The packer does not copy the original `.wz` file
-as the packing result.
+Each exported `.img.xml` root only adds `wz_rawlength`, the original `.img`
+body byte length, and `wz_xmlsha256`, a hash of the editable XML nodes. These
+two attributes are export metadata and are not original WZ node fields.
 
 Each export creates error logs under `<output>\_logs`:
 
@@ -73,12 +72,10 @@ Pack a folder such as `Map.wz` back into a legacy `.wz` file:
 python xml_to_wz.py ./out_wz_to_xml/Map.wz ./out_xml_to_wz/Map.wz
 ```
 
-By default, XML files exported by `wz_to_xml.py` are compared against
-`wz_xmlsha256`. If the editable XML content is unchanged, the packer writes that
-file's original `wz_rawbody`. If it changed, the packer rebuilds that `.img`
-from the XML node content so edited values, added nodes, and deleted nodes are
-written into the new WZ. `--use-wz-rawbody` is now only a forced raw mode for
-debugging because it ignores XML edits in files that have `wz_rawbody`.
+The packer rebuilds valid `<imgdir>` XML from node content so edited values,
+added nodes, and deleted nodes are written into the new WZ. Export metadata on
+the root `<imgdir>`, such as `wz_rawlength` and `wz_xmlsha256`, is ignored
+during packing and is not written as a WZ node.
 
 When an image body is rebuilt, the packer writes the directory entry checksum
 from the actual output body bytes instead of reusing the exported old checksum.
@@ -116,6 +113,31 @@ python img_to_wz.py ./out_wz_to_img/Map.wz ./out_img_to_wz/Map.wz
 
 This packer reads each `.img` file as raw bytes. It does not parse, validate,
 repair, normalize, or reinterpret `.img` content before writing it into the WZ.
+
+## Export XML Canvas to PNG
+
+Export one `<canvas>` node's `rawdata` from an exported `.img.xml` file to PNG:
+
+```powershell
+python xml_canvas_to_png.py ./out_wz_to_xml/Map.wz/Obj/login.img.xml ./ai_test_data/login_logo.png Title/logo/0/0
+```
+
+The third argument is the node path by `name` from the XML root. If the output
+argument is a directory, the script writes a PNG named from the node path.
+
+## Write PNG to XML Canvas
+
+Write a PNG back into one `<canvas>` node's `rawdata` in an exported `.img.xml`
+file:
+
+```powershell
+python png_to_xml_canvas.py ./ai_test_data/login_Title_logo_0_1.png ./out_wz_to_xml/Map.wz/Obj/login.img.xml Title/logo/0/1
+```
+
+The script keeps the XML file in place and only changes the target canvas start
+tag's `rawlength` and `rawdata` attributes. By default, the PNG size must match
+the canvas `width` and `height`; pass `--resize` if you explicitly want the PNG
+scaled to that canvas size.
 
 ## Replace English XML Text with Chinese XML Text
 

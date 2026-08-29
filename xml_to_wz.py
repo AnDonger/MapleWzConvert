@@ -5,10 +5,9 @@ Input is usually a folder named like ``Map.wz`` containing files such as:
     Tile/blackTile.img.xml
     Map/Map0/000000000.img.xml
 
-By default, an exported ``<imgdir>`` whose editable XML content hash is still
-unchanged is packed from its original ``wz_rawbody``. Files whose editable XML
-content changed are rebuilt from their XML nodes so edits are written into the
-new WZ.
+Export metadata attributes on the root ``<imgdir>`` are ignored while packing;
+valid XML nodes are rebuilt from their node content so edits are written into
+the new WZ.
 """
 
 from __future__ import annotations
@@ -16,7 +15,6 @@ from __future__ import annotations
 import argparse
 import base64
 from datetime import datetime
-import hashlib
 import io
 from pathlib import Path, PurePosixPath
 import subprocess
@@ -29,8 +27,6 @@ import xml.etree.ElementTree as ET
 WZPY_REPO = "https://github.com/Leonana69/wz-python.git"
 DEFAULT_WZPY_DIR = Path(__file__).resolve().parent / ".tools" / "wz-python"
 DEFAULT_COPYRIGHT = "Package file v1.0 Copyright 2002 Wizet, ZMS"
-XML_HASH_ATTR = "wz_xmlsha256"
-XML_RAW_METADATA_ATTRS = {"wz_rawlength", "wz_rawbody", XML_HASH_ATTR}
 
 
 class PackLogger:
@@ -143,35 +139,6 @@ def _decode_base64_attr(element: ET.Element, name: str) -> bytes:
     if not value:
         return b""
     return base64.b64decode(value.encode("ascii"))
-
-
-def _hash_xml_element(digest: "hashlib._Hash", element: ET.Element) -> None:
-    digest.update(element.tag.lower().encode("utf-8"))
-    digest.update(b"\0")
-    for key, value in sorted(element.attrib.items()):
-        if key in XML_RAW_METADATA_ATTRS:
-            continue
-        digest.update(key.encode("utf-8"))
-        digest.update(b"=")
-        digest.update(str(value).encode("utf-8"))
-        digest.update(b"\0")
-    digest.update(b"[\0")
-    for child in list(element):
-        _hash_xml_element(digest, child)
-    digest.update(b"]\0")
-
-
-def _editable_xml_sha256(root: ET.Element) -> str:
-    digest = hashlib.sha256()
-    _hash_xml_element(digest, root)
-    return digest.hexdigest()
-
-
-def _xml_matches_exported_rawbody(root: ET.Element) -> bool:
-    expected = root.get(XML_HASH_ATTR)
-    if not expected:
-        return False
-    return _editable_xml_sha256(root).lower() == expected.lower()
 
 
 def _set_raw_image_body(image: Any, raw_body: bytes) -> None:
@@ -345,7 +312,6 @@ def build_wz_from_xml(
     version: int,
     copyright: str,
     fstart: int,
-    use_wz_rawbody: bool,
     logger: PackLogger,
 ) -> int:
     from wzpy.crypto import WzKey, compute_version_hash
@@ -382,16 +348,7 @@ def build_wz_from_xml(
                 _set_raw_image_body(image, raw_file_bytes)
                 mode = "raw-file"
             else:
-                has_unchanged_hash = _xml_matches_exported_rawbody(root_element)
-                raw_body = (
-                    _decode_base64_attr(root_element, "wz_rawbody")
-                    if use_wz_rawbody or has_unchanged_hash
-                    else b""
-                )
-                if raw_body and (use_wz_rawbody or has_unchanged_hash):
-                    _set_raw_image_body(image, raw_body)
-                    mode = "raw-forced" if use_wz_rawbody else "raw-unchanged"
-                elif root_element.tag.lower() != "imgdir":
+                if root_element.tag.lower() != "imgdir":
                     _set_raw_image_body(image, raw_file_bytes)
                     mode = "raw-file"
                 else:
@@ -444,14 +401,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--template-wz",
         type=Path,
         help="Optional source .wz whose copyright/fstart should be reused.",
-    )
-    parser.add_argument(
-        "--use-wz-rawbody",
-        action="store_true",
-        help=(
-            "Force exported wz_rawbody bytes for every XML file that has them. "
-            "XML node edits in those files are ignored."
-        ),
     )
     parser.add_argument(
         "--logs-dir",
@@ -510,7 +459,6 @@ def main(argv: list[str] | None = None) -> int:
                 version=args.version,
                 copyright=copyright,
                 fstart=fstart,
-                use_wz_rawbody=args.use_wz_rawbody,
                 logger=logger,
             )
         except Exception as exc:  # noqa: BLE001 - CLI should fail cleanly.
