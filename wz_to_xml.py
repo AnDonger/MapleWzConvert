@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import base64
 from datetime import datetime
+import hashlib
 from pathlib import Path, PurePosixPath
 import subprocess
 import sys
@@ -123,6 +124,112 @@ def _xml_tag(prop: Any) -> str:
         "UOL": "uol",
         "Convex": "extended",
     }.get(prop.type_name, "property")
+
+
+XML_HASH_ATTR = "wz_xmlsha256"
+XML_RAW_METADATA_ATTRS = {"wz_rawlength", "wz_rawbody", XML_HASH_ATTR}
+
+
+def _hash_element(
+    digest: "hashlib._Hash",
+    tag: str,
+    attrs: dict[str, str],
+    children: list[tuple[str, dict[str, str], list[Any]]] | None = None,
+) -> None:
+    digest.update(tag.encode("utf-8"))
+    digest.update(b"\0")
+    for key, value in sorted(attrs.items()):
+        if key in XML_RAW_METADATA_ATTRS:
+            continue
+        digest.update(key.encode("utf-8"))
+        digest.update(b"=")
+        digest.update(str(value).encode("utf-8"))
+        digest.update(b"\0")
+    digest.update(b"[\0")
+    for child_tag, child_attrs, grand_children in children or []:
+        _hash_element(digest, child_tag, child_attrs, grand_children)
+    digest.update(b"]\0")
+
+
+def _property_hash_node(prop: Any) -> tuple[str, dict[str, str], list[Any]]:
+    from wzpy.properties import (
+        WzCanvasProperty,
+        WzConvexProperty,
+        WzNullProperty,
+        WzSoundProperty,
+        WzSubProperty,
+        WzUolProperty,
+        WzVectorProperty,
+    )
+
+    tag = _xml_tag(prop)
+    attrs = {"name": str(prop.name)}
+    children: list[tuple[str, dict[str, str], list[Any]]] = []
+
+    if isinstance(prop, WzNullProperty):
+        return tag, attrs, children
+
+    if isinstance(prop, WzVectorProperty):
+        attrs.update({"x": str(prop.x), "y": str(prop.y)})
+        return tag, attrs, children
+
+    if isinstance(prop, WzCanvasProperty):
+        raw = _read_canvas_bytes(prop) if prop.has_pixels() else b""
+        attrs.update(
+            {
+                "width": str(prop.width),
+                "height": str(prop.height),
+                "format": str(prop.format),
+                "format2": str(prop.format2),
+            }
+        )
+        if raw:
+            attrs["rawlength"] = str(len(raw))
+            attrs["rawdata"] = base64.b64encode(raw).decode("ascii")
+        children = [_property_hash_node(child) for child in prop.children()]
+        return tag, attrs, children
+
+    if isinstance(prop, WzSoundProperty):
+        raw = _read_sound_bytes(prop)
+        header = getattr(prop, "header", b"")
+        attrs.update(
+            {
+                "length_ms": str(prop.length_ms),
+                "value": str(prop.value),
+                "header": base64.b64encode(header).decode("ascii"),
+                "rawlength": str(len(raw)),
+                "rawdata": base64.b64encode(raw).decode("ascii"),
+            }
+        )
+        return tag, attrs, children
+
+    if isinstance(prop, WzConvexProperty):
+        children = [
+            ("vector", {"x": str(point.x), "y": str(point.y)}, [])
+            for point in prop.points
+        ]
+        return tag, attrs, children
+
+    if isinstance(prop, WzUolProperty):
+        attrs["value"] = str(prop.value)
+        return tag, attrs, children
+
+    if isinstance(prop, WzSubProperty):
+        children = [_property_hash_node(child) for child in prop.children()]
+        return tag, attrs, children
+
+    try:
+        attrs["value"] = str(prop.value)
+    except Exception:
+        attrs["value"] = ""
+    return tag, attrs, children
+
+
+def image_edit_sha256(image: Any) -> str:
+    digest = hashlib.sha256()
+    children = [_property_hash_node(child) for child in image.children()]
+    _hash_element(digest, "imgdir", {"name": str(image.name)}, children)
+    return digest.hexdigest()
 
 
 def _read_canvas_bytes(prop: Any) -> bytes:
@@ -263,9 +370,11 @@ def image_to_server_xml(
         )
         for child in image.children()
     )
+    edit_hash = image_edit_sha256(image)
     return (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
         f"<imgdir name={quoteattr(image.name)} wz_rawlength=\"{len(raw_body)}\" "
+        f'{XML_HASH_ATTR}="{edit_hash}" '
         f"wz_rawbody={quoteattr(base64.b64encode(raw_body).decode('ascii'))}>\n"
         f"{body}\n"
         "</imgdir>\n"
@@ -294,46 +403,6 @@ def _xml_target_path(output_dir: Path, wz_path: Path, rel_img_path: str) -> Path
     return output_dir / wz_path.name / Path(*img_path.parts).with_name(
         img_path.name + ".xml"
     )
-
-
-def _write_wz_meta(wz_file: Any, output_dir: Path, wz_path: Path) -> None:
-    target = output_dir / wz_path.name / "_wz_meta.xml"
-    lines = [
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
-        (
-            f'<wzmeta name={quoteattr(wz_path.name)} '
-            f'fsize="{wz_file.header.fsize}" fstart="{wz_file.header.fstart}" '
-            f'copyright={quoteattr(wz_file.header.copyright)}>'
-        ),
-    ]
-
-    def walk_dir(directory: Any) -> None:
-        for sub in directory.subdirs.values():
-            entry_kind = getattr(sub, "_entry_kind", 3)
-            string_offset = getattr(sub, "_entry_string_offset", None)
-            extra = f' entryKind="{entry_kind}"'
-            if string_offset is not None:
-                extra += f' stringOffset="{string_offset}"'
-            lines.append(
-                f'  <dir path={quoteattr(sub.path)} size="{getattr(sub, "_entry_size", 0)}" '
-                f'checksum="{getattr(sub, "_checksum", 0)}"{extra}/>'
-            )
-            walk_dir(sub)
-        for image in directory.images.values():
-            entry_kind = getattr(image, "_entry_kind", 4)
-            string_offset = getattr(image, "_entry_string_offset", None)
-            extra = f' entryKind="{entry_kind}"'
-            if string_offset is not None:
-                extra += f' stringOffset="{string_offset}"'
-            lines.append(
-                f'  <img path={quoteattr(image.path)} size="{image.size}" '
-                f'checksum="{getattr(image, "_checksum", 0)}"{extra}/>'
-            )
-
-    walk_dir(wz_file.root)
-    lines.append("</wzmeta>")
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
 
 
 def export_wz_file(
@@ -385,8 +454,6 @@ def export_wz_file(
                 logger.error(f"{wz_path.name} [{index}/{total}] {rel_path}: {exc}")
                 if stop_on_error:
                     raise
-
-        _write_wz_meta(wz_file, output_dir, wz_path)
 
     return exported, failed
 

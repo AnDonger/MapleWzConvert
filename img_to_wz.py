@@ -18,12 +18,8 @@ from typing import Any
 from xml_to_wz import (
     DEFAULT_COPYRIGHT,
     SyntheticWzFile,
-    _apply_wz_meta,
     _ensure_directory,
-    _load_wz_meta,
-    _load_wz_meta_header,
     _load_wzpy,
-    _reorder_children_from_meta,
     _set_raw_image_body,
 )
 
@@ -75,15 +71,6 @@ def _image_path_from_img(root_dir: Path, img_path: Path) -> PurePosixPath:
     return PurePosixPath(*rel.parts)
 
 
-def _create_meta_directories(root: Any, meta: dict[tuple[str, str], dict[str, int]]) -> None:
-    dir_paths = sorted(
-        (path for (kind, path) in meta if kind == "dir" and path),
-        key=lambda value: (value.count("/"), value),
-    )
-    for path in dir_paths:
-        _ensure_directory(root, tuple(PurePosixPath(path).parts))
-
-
 def build_wz_from_img(
     input_dir: Path,
     output_path: Path,
@@ -107,10 +94,6 @@ def build_wz_from_img(
     wz._reader = reader
     holder = SyntheticWzFile(reader)
 
-    wz_meta = _load_wz_meta(input_dir)
-    if wz_meta:
-        _create_meta_directories(wz.root, wz_meta)
-
     img_files = _find_img_files(input_dir)
     if not img_files:
         raise SystemExit(f"no .img files found under {input_dir}")
@@ -130,10 +113,6 @@ def build_wz_from_img(
         except Exception as exc:  # noqa: BLE001
             logger.error(f"{img_path}: {exc}")
             raise
-
-    _apply_wz_meta(wz.root, wz_meta)
-    if wz_meta:
-        _reorder_children_from_meta(wz.root)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     return wz.save_as(str(output_path))
@@ -200,12 +179,6 @@ def main(argv: list[str] | None = None) -> int:
     try:
         copyright = args.copyright
         fstart = args.fstart
-        meta_copyright, meta_fstart = _load_wz_meta_header(input_dir)
-        if meta_copyright is not None:
-            copyright = meta_copyright
-        if meta_fstart is not None:
-            fstart = meta_fstart
-
         print(f"Input: {input_dir}")
         print(f"Output: {output_path}")
         print(f"Region: {args.region}, version: {args.version}")

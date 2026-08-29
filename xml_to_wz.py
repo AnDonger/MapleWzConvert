@@ -5,9 +5,10 @@ Input is usually a folder named like ``Map.wz`` containing files such as:
     Tile/blackTile.img.xml
     Map/Map0/000000000.img.xml
 
-By default, valid ``<imgdir>`` XML is rebuilt from its node content so edits to
-values or child nodes are written into the new WZ. The exported ``wz_rawbody``
-attribute is kept as a backup for explicit raw round-trip mode only.
+By default, an exported ``<imgdir>`` whose editable XML content hash is still
+unchanged is packed from its original ``wz_rawbody``. Files whose editable XML
+content changed are rebuilt from their XML nodes so edits are written into the
+new WZ.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from __future__ import annotations
 import argparse
 import base64
 from datetime import datetime
+import hashlib
 import io
 from pathlib import Path, PurePosixPath
 import subprocess
@@ -27,6 +29,8 @@ import xml.etree.ElementTree as ET
 WZPY_REPO = "https://github.com/Leonana69/wz-python.git"
 DEFAULT_WZPY_DIR = Path(__file__).resolve().parent / ".tools" / "wz-python"
 DEFAULT_COPYRIGHT = "Package file v1.0 Copyright 2002 Wizet, ZMS"
+XML_HASH_ATTR = "wz_xmlsha256"
+XML_RAW_METADATA_ATTRS = {"wz_rawlength", "wz_rawbody", XML_HASH_ATTR}
 
 
 class PackLogger:
@@ -139,6 +143,35 @@ def _decode_base64_attr(element: ET.Element, name: str) -> bytes:
     if not value:
         return b""
     return base64.b64decode(value.encode("ascii"))
+
+
+def _hash_xml_element(digest: "hashlib._Hash", element: ET.Element) -> None:
+    digest.update(element.tag.lower().encode("utf-8"))
+    digest.update(b"\0")
+    for key, value in sorted(element.attrib.items()):
+        if key in XML_RAW_METADATA_ATTRS:
+            continue
+        digest.update(key.encode("utf-8"))
+        digest.update(b"=")
+        digest.update(str(value).encode("utf-8"))
+        digest.update(b"\0")
+    digest.update(b"[\0")
+    for child in list(element):
+        _hash_xml_element(digest, child)
+    digest.update(b"]\0")
+
+
+def _editable_xml_sha256(root: ET.Element) -> str:
+    digest = hashlib.sha256()
+    _hash_xml_element(digest, root)
+    return digest.hexdigest()
+
+
+def _xml_matches_exported_rawbody(root: ET.Element) -> bool:
+    expected = root.get(XML_HASH_ATTR)
+    if not expected:
+        return False
+    return _editable_xml_sha256(root).lower() == expected.lower()
 
 
 def _set_raw_image_body(image: Any, raw_body: bytes) -> None:
@@ -294,90 +327,6 @@ def _ensure_directory(root: Any, parts: tuple[str, ...]) -> Any:
     return current
 
 
-def _load_wz_meta(input_dir: Path) -> dict[tuple[str, str], dict[str, int]]:
-    meta_path = input_dir / "_wz_meta.xml"
-    if not meta_path.is_file():
-        return {}
-
-    result: dict[tuple[str, str], dict[str, int]] = {}
-    root = ET.parse(meta_path).getroot()
-    order_by_parent: dict[tuple[str, str], int] = {}
-    for child in list(root):
-        tag = child.tag.lower()
-        if tag not in {"dir", "img"}:
-            continue
-        path = child.get("path", "").replace("\\", "/").strip("/")
-        parent_path, sep, _name = path.rpartition("/")
-        if not sep:
-            parent_path = ""
-        order_key = (tag, parent_path)
-        order = order_by_parent.get(order_key, 0)
-        order_by_parent[order_key] = order + 1
-        result[(tag, path)] = {
-            "checksum": _int_attr(child, "checksum"),
-            "size": _int_attr(child, "size"),
-            "order": order,
-        }
-        entry_kind = child.get("entryKind")
-        if entry_kind not in (None, ""):
-            result[(tag, path)]["entry_kind"] = int(entry_kind)
-        string_offset = child.get("stringOffset")
-        if string_offset not in (None, ""):
-            result[(tag, path)]["entry_string_offset"] = int(string_offset)
-    return result
-
-
-def _load_wz_meta_header(input_dir: Path) -> tuple[str | None, int | None]:
-    meta_path = input_dir / "_wz_meta.xml"
-    if not meta_path.is_file():
-        return None, None
-
-    root = ET.parse(meta_path).getroot()
-    copyright = root.get("copyright")
-    fstart_value = root.get("fstart")
-    fstart = int(fstart_value) if fstart_value not in (None, "") else None
-    return copyright, fstart
-
-
-def _apply_wz_meta(root: Any, meta: dict[tuple[str, str], dict[str, int]]) -> None:
-    for (kind, path), values in meta.items():
-        node = root.get(path)
-        if node is None:
-            continue
-        if kind == "dir" and hasattr(node, "subdirs"):
-            node._checksum = values["checksum"]
-            node._entry_size = values["size"]
-            node._entry_order = values["order"]
-            if "entry_kind" in values:
-                node._entry_kind = values["entry_kind"]
-            if "entry_string_offset" in values:
-                node._entry_string_offset = values["entry_string_offset"]
-        elif kind == "img" and hasattr(node, "size"):
-            node._checksum = values["checksum"]
-            node._entry_order = values["order"]
-            if "entry_kind" in values:
-                node._entry_kind = values["entry_kind"]
-            if "entry_string_offset" in values:
-                node._entry_string_offset = values["entry_string_offset"]
-
-
-def _reorder_children_from_meta(directory: Any) -> None:
-    directory.subdirs = dict(
-        sorted(
-            directory.subdirs.items(),
-            key=lambda item: getattr(item[1], "_entry_order", 1_000_000),
-        )
-    )
-    directory.images = dict(
-        sorted(
-            directory.images.items(),
-            key=lambda item: getattr(item[1], "_entry_order", 1_000_000),
-        )
-    )
-    for sub in directory.subdirs.values():
-        _reorder_children_from_meta(sub)
-
-
 def _load_template_header(template: Path | None, region: str, version: int | None):
     if template is None:
         return None
@@ -415,7 +364,6 @@ def build_wz_from_xml(
     xml_files = _find_xml_files(input_dir)
     if not xml_files:
         raise SystemExit(f"no .xml files found under {input_dir}")
-    wz_meta = _load_wz_meta(input_dir)
 
     print(f"XML files: {len(xml_files)}")
     for index, xml_path in enumerate(xml_files, 1):
@@ -426,21 +374,26 @@ def build_wz_from_xml(
         try:
             image = WzImage(image_name, parent=parent, offset=0, size=0, wz_file=holder)
             raw_file_bytes = xml_path.read_bytes()
+            mode = "rebuilt"
             try:
                 element_tree = ET.parse(xml_path)
                 root_element = element_tree.getroot()
             except ET.ParseError:
                 _set_raw_image_body(image, raw_file_bytes)
+                mode = "raw-file"
             else:
+                has_unchanged_hash = _xml_matches_exported_rawbody(root_element)
                 raw_body = (
                     _decode_base64_attr(root_element, "wz_rawbody")
-                    if use_wz_rawbody
+                    if use_wz_rawbody or has_unchanged_hash
                     else b""
                 )
-                if use_wz_rawbody and raw_body:
+                if raw_body and (use_wz_rawbody or has_unchanged_hash):
                     _set_raw_image_body(image, raw_body)
+                    mode = "raw-forced" if use_wz_rawbody else "raw-unchanged"
                 elif root_element.tag.lower() != "imgdir":
                     _set_raw_image_body(image, raw_file_bytes)
+                    mode = "raw-file"
                 else:
                     try:
                         image._root = _parse_property(
@@ -453,17 +406,16 @@ def build_wz_from_xml(
                         )
                         image._root.name = image_name
                         image._parsed = True
+                        mode = "rebuilt"
                     except Exception:
                         _set_raw_image_body(image, raw_file_bytes)
+                        mode = "raw-file"
             parent.images[image_name] = image
-            print(f"  [{index:>5}/{len(xml_files)}] {image_path}")
+            print(f"  [{index:>5}/{len(xml_files)}] {image_path} [{mode}]")
         except Exception as exc:  # noqa: BLE001 - keep a focused error log.
             logger.error(f"{xml_path}: {exc}")
             raise
 
-    _apply_wz_meta(wz.root, wz_meta)
-    if wz_meta:
-        _reorder_children_from_meta(wz.root)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     return wz.save_as(str(output_path))
 
@@ -497,8 +449,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--use-wz-rawbody",
         action="store_true",
         help=(
-            "Use exported wz_rawbody bytes instead of rebuilding valid <imgdir> XML. "
-            "This is for no-edit raw round-trip checks; XML node edits are ignored."
+            "Force exported wz_rawbody bytes for every XML file that has them. "
+            "XML node edits in those files are ignored."
         ),
     )
     parser.add_argument(
@@ -542,11 +494,6 @@ def main(argv: list[str] | None = None) -> int:
     try:
         copyright = args.copyright
         fstart = args.fstart
-        meta_copyright, meta_fstart = _load_wz_meta_header(input_dir)
-        if meta_copyright is not None:
-            copyright = meta_copyright
-        if meta_fstart is not None:
-            fstart = meta_fstart
         template = _load_template_header(args.template_wz, args.region, args.version)
         if template is not None:
             copyright, fstart = template

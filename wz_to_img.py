@@ -1,8 +1,6 @@
 """Export legacy MapleStory .wz files to raw .img files.
 
-Each .img body is copied byte-for-byte from the WZ container. The script also
-writes _wz_meta.xml so img_to_wz.py can restore directory order and entry
-metadata when packing the folder back to WZ.
+Each .img body is copied byte-for-byte from the WZ container.
 """
 
 from __future__ import annotations
@@ -13,7 +11,6 @@ from pathlib import Path
 import subprocess
 import sys
 from typing import Any
-from xml.sax.saxutils import quoteattr
 
 
 WZPY_REPO = "https://github.com/Leonana69/wz-python.git"
@@ -112,45 +109,6 @@ def _read_image_body(wz_file: Any, image: Any) -> bytes:
     return data
 
 
-def _write_wz_meta(wz_file: Any, target_root: Path, wz_path: Path) -> None:
-    target = target_root / "_wz_meta.xml"
-    lines = [
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
-        (
-            f'<wzmeta name={quoteattr(wz_path.name)} '
-            f'fsize="{wz_file.header.fsize}" fstart="{wz_file.header.fstart}" '
-            f'copyright={quoteattr(wz_file.header.copyright)}>'
-        ),
-    ]
-
-    def walk_dir(directory: Any) -> None:
-        for sub in directory.subdirs.values():
-            entry_kind = getattr(sub, "_entry_kind", 3)
-            string_offset = getattr(sub, "_entry_string_offset", None)
-            extra = f' entryKind="{entry_kind}"'
-            if string_offset is not None:
-                extra += f' stringOffset="{string_offset}"'
-            lines.append(
-                f'  <dir path={quoteattr(sub.path)} size="{getattr(sub, "_entry_size", 0)}" '
-                f'checksum="{getattr(sub, "_checksum", 0)}"{extra}/>'
-            )
-            walk_dir(sub)
-        for image in directory.images.values():
-            entry_kind = getattr(image, "_entry_kind", 4)
-            string_offset = getattr(image, "_entry_string_offset", None)
-            extra = f' entryKind="{entry_kind}"'
-            if string_offset is not None:
-                extra += f' stringOffset="{string_offset}"'
-            lines.append(
-                f'  <img path={quoteattr(image.path)} size="{image.size}" '
-                f'checksum="{getattr(image, "_checksum", 0)}"{extra}/>'
-            )
-
-    walk_dir(wz_file.root)
-    lines.append("</wzmeta>")
-    target.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
-
-
 def export_wz_to_img(
     wz_path: Path,
     output_dir: Path,
@@ -180,7 +138,6 @@ def export_wz_to_img(
                 failed += 1
                 logger.error(f"{wz_path}:{image_path}: {exc}")
                 print(f"  [{index:>5}/{len(images)}] {image_path}: ERROR")
-        _write_wz_meta(wz, target_root, wz_path)
 
     return exported, failed
 
