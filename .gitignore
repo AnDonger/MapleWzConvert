@@ -46,6 +46,7 @@ composer.lock
 .DS_Store
 Thumbs.db
 /.venv
+/.tools
 /log
 /auth
 /out_*

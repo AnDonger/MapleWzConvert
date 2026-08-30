@@ -12,10 +12,19 @@ Install dependencies first:
 python -m pip install -r requirements.txt
 ```
 
+## Project SDK
+
+The WZ runtime is vendored in `maplewz_sdk/`. Scripts use this project-local
+SDK by default, including the local GMS 083 parser/writer fixes. Normal use no
+longer requires `.tools/wz-python` or network cloning.
+
+Keep future WZ format fixes inside `maplewz_sdk/wzpy` so export and pack tools
+share the same maintained implementation.
+
 Export a single WZ file:
 
 ```powershell
-python wz_to_xml.py ./original_wz/Map.wz ./out_wz_to_xml
+python wz_to_xml.py ./out_img_to_wz/Map.wz ./out_wz_to_xml
 ```
 
 Export every `.wz` file under a client folder:
@@ -108,7 +117,7 @@ Normal progress is printed to the console; logs only contain warnings/errors.
 Pack a folder such as `wz_to_img/Map.wz` back into a `.wz` file:
 
 ```powershell
-python img_to_wz.py ./out_wz_to_img/Map.wz ./out_img_to_wz/Map.wz
+python img_to_wz.py ./out_wz_to_img/UI.wz ./out_img_to_wz/UI.wz
 ```
 
 This packer reads each `.img` file as raw bytes. It does not parse, validate,

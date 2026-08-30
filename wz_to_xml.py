@@ -1,10 +1,7 @@
 """Export MapleStory GMS v83 .wz files to XML files.
 
-The script uses the open-source ``wzpy`` reader from:
-https://github.com/Leonana69/wz-python
-
-If ``wzpy`` is not already importable, the script can bootstrap it into
-``.tools/wz-python`` with git. Install Python dependencies first:
+The script uses the project-local ``maplewz_sdk`` runtime. Install Python
+dependencies first:
 
     python -m pip install -r requirements.txt
 """
@@ -16,14 +13,9 @@ import base64
 from datetime import datetime
 import hashlib
 from pathlib import Path, PurePosixPath
-import subprocess
 import sys
 from typing import Any
 from xml.sax.saxutils import quoteattr
-
-
-WZPY_REPO = "https://github.com/Leonana69/wz-python.git"
-DEFAULT_WZPY_DIR = Path(__file__).resolve().parent / ".tools" / "wz-python"
 
 
 class ExportLogger:
@@ -63,49 +55,12 @@ class ExportLogger:
         self.write("ERROR", message)
 
 
-def _add_wzpy_path(path: Path) -> None:
-    if path.exists() and str(path) not in sys.path:
-        sys.path.insert(0, str(path))
-
-
-def _bootstrap_wzpy(path: Path) -> None:
-    if (path / "wzpy").is_dir():
-        return
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    print(f"wzpy not found, cloning {WZPY_REPO} -> {path}")
-    subprocess.run(
-        ["git", "clone", "--depth", "1", WZPY_REPO, str(path)],
-        check=True,
-    )
-
-
 def _load_wzpy(wzpy_path: Path | None, no_bootstrap: bool) -> None:
-    if wzpy_path is not None:
-        _add_wzpy_path(wzpy_path.resolve())
+    if wzpy_path is not None or no_bootstrap:
+        print("Note: --wzpy-path/--no-bootstrap are ignored; using project-local maplewz_sdk.")
+    from maplewz_sdk import ensure_wzpy_importable
 
-    try:
-        import wzpy  # noqa: F401
-        return
-    except ImportError:
-        pass
-
-    if no_bootstrap:
-        raise SystemExit(
-            "wzpy is not importable. Install/clone wz-python and pass "
-            "--wzpy-path, or run without --no-bootstrap."
-        )
-
-    _bootstrap_wzpy(DEFAULT_WZPY_DIR)
-    _add_wzpy_path(DEFAULT_WZPY_DIR)
-
-    try:
-        import wzpy  # noqa: F401
-    except ImportError as exc:
-        raise SystemExit(
-            "wzpy was cloned but cannot be imported. Run "
-            "`python -m pip install -r requirements.txt` first."
-        ) from exc
+    ensure_wzpy_importable()
 
 
 def _xml_tag(prop: Any) -> str:
@@ -490,12 +445,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--wzpy-path",
         type=Path,
-        help="Path to a local clone of https://github.com/Leonana69/wz-python.",
+        help="Deprecated; ignored. The project-local maplewz_sdk is used.",
     )
     parser.add_argument(
         "--no-bootstrap",
         action="store_true",
-        help="Do not auto-clone wz-python when wzpy is missing.",
+        help="Deprecated; ignored. The project-local maplewz_sdk is used.",
     )
     return parser
 

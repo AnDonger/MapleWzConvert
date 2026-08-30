@@ -146,12 +146,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--wzpy-path",
         type=Path,
-        help="Path to a local clone of https://github.com/Leonana69/wz-python.",
+        help="Deprecated; ignored. The project-local maplewz_sdk is used.",
     )
     parser.add_argument(
         "--no-bootstrap",
         action="store_true",
-        help="Do not auto-clone wz-python when wzpy is missing.",
+        help="Deprecated; ignored. The project-local maplewz_sdk is used.",
     )
     return parser
 
