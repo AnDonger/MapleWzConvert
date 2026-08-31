@@ -123,6 +123,40 @@ python img_to_wz.py ./out_wz_to_img/UI.wz ./out_img_to_wz/UI.wz
 This packer reads each `.img` file as raw bytes. It does not parse, validate,
 repair, normalize, or reinterpret `.img` content before writing it into the WZ.
 
+## Export Raw IMG to XML
+
+Export raw `.img` files under one `.wz` directory to `.img.xml` files:
+
+```powershell
+python img_to_xml.py ./out_wz_to_img/UI.wz ./out_img_to_xml
+```
+
+Export every `.wz` directory under a parent directory:
+
+```powershell
+python img_to_xml.py ./out_wz_to_img ./out_img_to_xml
+```
+
+The output preserves the `.wz` directory and inner `.img` paths, for example
+`out_img_to_xml\Item.wz\Consume\02000000.img.xml`.
+
+## Pack XML to Raw IMG
+
+Pack `.img.xml` files under one `.wz` directory back to raw `.img` files:
+
+```powershell
+python xml_to_img.py ./out_wz_to_xml/UI.wz ./out_xml_to_img
+```
+
+Pack every `.wz` XML directory under a parent directory:
+
+```powershell
+python xml_to_img.py ./out_wz_to_xml ./out_xml_to_img
+```
+
+The output preserves the `.wz` directory and inner paths, for example
+`out_xml_to_img\UI.wz\StatusBar.img`.
+
 ## Export XML Canvas to PNG
 
 Export one `<canvas>` node's `rawdata` from an exported `.img.xml` file to PNG:
@@ -137,7 +171,7 @@ argument is a directory, the script writes a PNG named from the node path.
 Export all `<canvas>` nodes under one exported `.wz` XML directory:
 
 ```powershell
-python xml_canvas_to_png.py ./out_wz_to_xml/UI.wz ./ai_test_data/UI.wz
+python xml_canvas_to_png.py ./out_img_to_xml/UI.wz ./ai_test_data/UI.wz
 ```
 
 The output keeps the input directory structure. Each `.img.xml` file becomes a
@@ -152,7 +186,7 @@ Write a PNG back into one `<canvas>` node's `rawdata` in an exported `.img.xml`
 file:
 
 ```powershell
-python png_to_xml_canvas.py ./ai_test_data/base_backgrnd_top_wrapped_rounded_2.png ./out_wz_to_xml/UI.wz/StatusBar.img.xml base/backgrnd
+python png_to_xml_canvas.py ./ai_test_data/202608311.png ./out_wz_to_xml/UI.wz/StatusBar.img.xml base/backgrnd
 ```
 
 The script keeps the XML file in place and only changes the target canvas start
@@ -173,9 +207,7 @@ Matching uses the same relative XML path plus the same `imgdir` path and
 `string name`. The English XML is kept as the base file; the script only
 replaces the matched `value` attribute text and does not reformat XML, rewrite
 empty tags, change unrelated fields, or change line endings.
-
-Only Chinese `value` text that contains real Han characters is used. Values
-that look like garbled text such as `????` are skipped and treated as missing.
+ look like garbled text such as `????` are skipped and treated as missing.
 
 `String.wz/Skill.img.xml` has extra display handling for the old client/tool UI.
 Long `desc` segments are wrapped with literal `\n`, preferring punctuation such
