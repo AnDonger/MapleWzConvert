@@ -24,7 +24,7 @@ share the same maintained implementation.
 Export a single WZ file:
 
 ```powershell
-python wz_to_xml.py ./out_img_to_wz/Map.wz ./out_wz_to_xml
+python wz_to_xml.py ./out_img_to_wz/UI.wz ./out_wz_to_xml
 ```
 
 Export every `.wz` file under a client folder:
@@ -78,7 +78,7 @@ Canvas images are not decoded, so PNG decode warnings are not produced.
 Pack a folder such as `Map.wz` back into a legacy `.wz` file:
 
 ```powershell
-python xml_to_wz.py ./out_wz_to_xml/Map.wz ./out_xml_to_wz/Map.wz
+python xml_to_wz.py ./out_wz_to_xml/UI.wz ./out_xml_to_wz/UI.wz
 ```
 
 The packer rebuilds valid `<imgdir>` XML from node content so edited values,
@@ -100,7 +100,7 @@ Export every embedded `.img` body from a `.wz` file without parsing or changing
 the image body bytes:
 
 ```powershell
-python wz_to_img.py ./original_wz/Map.wz ./out_wz_to_img
+python wz_to_img.py ./out_xml_to_wz/UI.wz ./out_wz_to_img
 ```
 
 The script writes paths like:
@@ -128,11 +128,23 @@ repair, normalize, or reinterpret `.img` content before writing it into the WZ.
 Export one `<canvas>` node's `rawdata` from an exported `.img.xml` file to PNG:
 
 ```powershell
-python xml_canvas_to_png.py ./out_wz_to_xml/Map.wz/Obj/login.img.xml ./ai_test_data/login_logo.png Title/logo/0/0
+python xml_canvas_to_png.py ./out_wz_to_xml/Map.wz/Obj/login.img.xml ./ai_test_data/Map.wz/login.img.xml Title/logo/0/0
 ```
 
 The third argument is the node path by `name` from the XML root. If the output
 argument is a directory, the script writes a PNG named from the node path.
+
+Export all `<canvas>` nodes under one exported `.wz` XML directory:
+
+```powershell
+python xml_canvas_to_png.py ./out_wz_to_xml/UI.wz ./ai_test_data/UI.wz
+```
+
+The output keeps the input directory structure. Each `.img.xml` file becomes a
+directory, so `Obj/login.img.xml` exports to `ai_test_data/Map.wz/Obj/login.img.xml/`.
+PNG files are named from the canvas node path joined by `_`, such as
+`Title_logo_0_0.png`. If a generated name already exists or repeats in the same
+directory, the script appends `_重复_当前时间戳` before `.png`.
 
 ## Write PNG to XML Canvas
 
@@ -140,7 +152,7 @@ Write a PNG back into one `<canvas>` node's `rawdata` in an exported `.img.xml`
 file:
 
 ```powershell
-python png_to_xml_canvas.py ./ai_test_data/login_Title_logo_0_1.png ./out_wz_to_xml/Map.wz/Obj/login.img.xml Title/logo/0/1
+python png_to_xml_canvas.py ./ai_test_data/base_backgrnd_top_wrapped_rounded_2.png ./out_wz_to_xml/UI.wz/StatusBar.img.xml base/backgrnd
 ```
 
 The script keeps the XML file in place and only changes the target canvas start

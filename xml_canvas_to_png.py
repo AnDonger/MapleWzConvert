@@ -1,9 +1,10 @@
-"""Export one canvas rawdata node from an exported .img.xml file to PNG."""
+"""Export canvas rawdata nodes from exported .img.xml files to PNG."""
 
 from __future__ import annotations
 
 import argparse
 import base64
+from datetime import datetime
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -52,10 +53,47 @@ def _find_node(root: ET.Element, node_path: str) -> ET.Element:
 def _default_png_path(output: Path, node_path: str) -> Path:
     if output.suffix.lower() == ".png":
         return output
-    safe_name = "_".join(_split_node_path(node_path))
+    safe_name = _safe_png_stem(_split_node_path(node_path))
+    return output / f"{safe_name}.png"
+
+
+def _safe_png_stem(parts: list[str]) -> str:
+    safe_name = "_".join(parts)
     for char in '<>:"/\\|?*':
         safe_name = safe_name.replace(char, "_")
-    return output / f"{safe_name}.png"
+    safe_name = safe_name.strip(" ._")
+    return safe_name or "canvas"
+
+
+def _unique_png_path(output_dir: Path, parts: list[str], used_paths: set[Path]) -> Path:
+    stem = _safe_png_stem(parts)
+    candidate = output_dir / f"{stem}.png"
+    if candidate not in used_paths and not candidate.exists():
+        used_paths.add(candidate)
+        return candidate
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    duplicate_stem = f"{stem}_重复_{timestamp}"
+    candidate = output_dir / f"{duplicate_stem}.png"
+    index = 2
+    while candidate in used_paths or candidate.exists():
+        candidate = output_dir / f"{duplicate_stem}_{index}.png"
+        index += 1
+    used_paths.add(candidate)
+    return candidate
+
+
+def _canvas_to_namespace(canvas_element: ET.Element) -> SimpleNamespace:
+    rawdata = canvas_element.get("rawdata")
+    if not rawdata:
+        raise ValueError("canvas has no rawdata")
+    return SimpleNamespace(
+        width=_int_attr(canvas_element, "width"),
+        height=_int_attr(canvas_element, "height"),
+        format=_int_attr(canvas_element, "format"),
+        format2=_int_attr(canvas_element, "format2"),
+        _png_data=base64.b64decode(rawdata.encode("ascii")),
+    )
 
 
 def export_canvas_to_png(
@@ -73,17 +111,7 @@ def export_canvas_to_png(
         name = canvas_element.get("name", canvas_element.tag)
         raise ValueError(f"target node is not a canvas: {name!r} <{canvas_element.tag}>")
 
-    rawdata = canvas_element.get("rawdata")
-    if not rawdata:
-        raise ValueError(f"target canvas has no rawdata: {node_path}")
-
-    canvas = SimpleNamespace(
-        width=_int_attr(canvas_element, "width"),
-        height=_int_attr(canvas_element, "height"),
-        format=_int_attr(canvas_element, "format"),
-        format2=_int_attr(canvas_element, "format2"),
-        _png_data=base64.b64decode(rawdata.encode("ascii")),
-    )
+    canvas = _canvas_to_namespace(canvas_element)
 
     png_path = _default_png_path(output, node_path).resolve()
     png_path.parent.mkdir(parents=True, exist_ok=True)
@@ -92,13 +120,90 @@ def export_canvas_to_png(
     return png_path
 
 
+def _iter_canvas_nodes(
+    element: ET.Element,
+    path_parts: list[str],
+) -> list[tuple[list[str], ET.Element]]:
+    results: list[tuple[list[str], ET.Element]] = []
+    for child in list(element):
+        child_name = child.get("name", child.tag)
+        child_path = [*path_parts, child_name]
+        if child.tag.lower() == "canvas":
+            results.append((child_path, child))
+        results.extend(_iter_canvas_nodes(child, child_path))
+    return results
+
+
+def export_all_canvases_to_png(
+    xml_path: Path,
+    output_dir: Path,
+    *,
+    region: str,
+) -> tuple[int, list[str]]:
+    from wzpy.canvas import decode_canvas
+
+    root = ET.parse(xml_path).getroot()
+    canvas_nodes = _iter_canvas_nodes(root, [])
+    if not canvas_nodes:
+        return 0, []
+
+    output_dir = output_dir.resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    exported = 0
+    failures: list[str] = []
+    used_paths: set[Path] = set()
+    for parts, canvas_element in canvas_nodes:
+        node_path = "/".join(parts)
+        try:
+            canvas = _canvas_to_namespace(canvas_element)
+            png_path = _unique_png_path(output_dir, parts, used_paths)
+            image = decode_canvas(canvas, region=region)
+            image.save(png_path)
+            exported += 1
+            print(f"Wrote: {png_path}")
+        except Exception as exc:  # noqa: BLE001 - continue exporting the rest.
+            failures.append(f"{node_path}: {exc}")
+            print(f"ERROR: {node_path}: {exc}", file=sys.stderr)
+    return exported, failures
+
+
+def export_xml_tree_canvases_to_png(
+    input_dir: Path,
+    output_dir: Path,
+    *,
+    region: str,
+) -> tuple[int, int, list[str]]:
+    xml_files = sorted(input_dir.rglob("*.xml"))
+    output_dir = output_dir.resolve()
+
+    exported_total = 0
+    file_count = 0
+    failures: list[str] = []
+    for index, xml_path in enumerate(xml_files, start=1):
+        rel_path = xml_path.relative_to(input_dir)
+        target_dir = output_dir / rel_path.parent / xml_path.name
+        print(f"  [{index:>5}/{len(xml_files)}] {rel_path}")
+        exported, file_failures = export_all_canvases_to_png(
+            xml_path,
+            target_dir,
+            region=region,
+        )
+        if exported:
+            file_count += 1
+            exported_total += exported
+        for failure in file_failures:
+            failures.append(f"{rel_path}: {failure}")
+    return file_count, exported_total, failures
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Export one canvas rawdata node from .img.xml to PNG."
+        description="Export canvas rawdata nodes from .img.xml files to PNG."
     )
-    parser.add_argument("xml_file", help="Input .img.xml file path.")
+    parser.add_argument("xml_file", help="Input .img.xml file path or XML directory.")
     parser.add_argument("output", help="Output .png file path or output directory.")
-    parser.add_argument("node", help="Canvas node path, for example: Title/logo/0/0")
+    parser.add_argument("node", nargs="?", help="Canvas node path, for example: Title/logo/0/0")
     parser.add_argument("--region", default="GMS", help="WZ region cipher. Default: GMS.")
     parser.add_argument(
         "--wzpy-path",
@@ -118,23 +223,41 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     _load_wzpy(args.wzpy_path, args.no_bootstrap)
 
-    xml_path = Path(args.xml_file).expanduser().resolve()
-    if not xml_path.is_file():
-        raise SystemExit(f"input XML file does not exist: {xml_path}")
+    input_path = Path(args.xml_file).expanduser().resolve()
+    if not input_path.exists():
+        raise SystemExit(f"input path does not exist: {input_path}")
 
     try:
-        png_path = export_canvas_to_png(
-            xml_path,
-            Path(args.output).expanduser(),
-            args.node,
-            region=args.region,
-        )
+        output = Path(args.output).expanduser()
+        if args.node:
+            if not input_path.is_file():
+                raise ValueError("node path mode requires one input .img.xml file")
+            png_path = export_canvas_to_png(
+                input_path,
+                output,
+                args.node,
+                region=args.region,
+            )
+            print(f"Wrote: {png_path}")
+            return 0
+        if input_path.is_dir():
+            file_count, exported, failures = export_xml_tree_canvases_to_png(
+                input_path,
+                output,
+                region=args.region,
+            )
+            print(
+                f"Done. XML files with canvas: {file_count}, "
+                f"exported: {exported}, failed: {len(failures)}"
+            )
+            return 1 if failures else 0
+        exported, failures = export_all_canvases_to_png(input_path, output, region=args.region)
     except Exception as exc:  # noqa: BLE001 - CLI should show a concise error.
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
-    print(f"Wrote: {png_path}")
-    return 0
+    print(f"Done. Exported: {exported}, failed: {len(failures)}")
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":
