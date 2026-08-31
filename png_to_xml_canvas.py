@@ -1,4 +1,4 @@
-"""Write a PNG image into one canvas rawdata node in an exported .img.xml file."""
+"""Write a PNG image into one canvas node in an exported .img.xml file."""
 
 from __future__ import annotations
 
@@ -109,10 +109,18 @@ def _replace_or_insert_attr(tag: bytes, name: str, value: str) -> bytes:
     return tag[:insert_at] + f' {name}="{value}"'.encode("ascii") + tag[insert_at:]
 
 
-def _replace_canvas_attrs(data: bytes, start: int, raw_payload: bytes) -> bytes:
+def _replace_canvas_attrs(
+    data: bytes,
+    start: int,
+    width: int,
+    height: int,
+    raw_payload: bytes,
+) -> bytes:
     end = _find_start_tag_end(data, start)
     tag = data[start:end]
     rawdata = base64.b64encode(raw_payload).decode("ascii")
+    tag = _replace_or_insert_attr(tag, "width", str(width))
+    tag = _replace_or_insert_attr(tag, "height", str(height))
     tag = _replace_or_insert_attr(tag, "rawlength", str(len(raw_payload)))
     tag = _replace_or_insert_attr(tag, "rawdata", rawdata)
     return data[:start] + tag + data[end:]
@@ -124,7 +132,6 @@ def write_png_to_xml_canvas(
     node_path: str,
     *,
     region: str,
-    resize: bool,
     zlib_level: int,
 ) -> tuple[int, int, int]:
     from wzpy.canvas import encode_canvas_payload
@@ -133,18 +140,10 @@ def write_png_to_xml_canvas(
     data = xml_path.read_bytes()
     match = _find_canvas(data, node_path)
     attrs = match["attrs"]
-    width = _int_attr(attrs, "width")
-    height = _int_attr(attrs, "height")
     fmt = _int_attr(attrs, "format") + (_int_attr(attrs, "format2") << 8)
 
     image = Image.open(png_path).convert("RGBA")
-    if image.size != (width, height):
-        if not resize:
-            raise ValueError(
-                f"PNG size {image.size[0]}x{image.size[1]} does not match "
-                f"canvas {width}x{height}; pass --resize to scale it"
-            )
-        image = image.resize((width, height), Image.LANCZOS)
+    width, height = image.size
 
     old_raw = base64.b64decode(attrs.get("rawdata", "").encode("ascii")) if attrs.get("rawdata") else b""
     raw_payload = encode_canvas_payload(
@@ -156,23 +155,20 @@ def write_png_to_xml_canvas(
         listwz=_is_listwz_payload(old_raw),
         zlib_level=zlib_level,
     )
-    xml_path.write_bytes(_replace_canvas_attrs(data, int(match["byte_index"]), raw_payload))
+    xml_path.write_bytes(
+        _replace_canvas_attrs(data, int(match["byte_index"]), width, height, raw_payload)
+    )
     return width, height, len(raw_payload)
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Write a PNG into one canvas rawdata node in .img.xml."
+        description="Write a PNG into one canvas node in .img.xml."
     )
     parser.add_argument("png_file", help="Input .png file path.")
     parser.add_argument("xml_file", help="Target .img.xml file path to modify in place.")
     parser.add_argument("node", help="Canvas node path, for example: Title/logo/0/0")
     parser.add_argument("--region", default="GMS", help="WZ region cipher. Default: GMS.")
-    parser.add_argument(
-        "--resize",
-        action="store_true",
-        help="Resize PNG to the target canvas width/height when sizes differ.",
-    )
     parser.add_argument(
         "--zlib-level",
         type=int,
@@ -212,7 +208,6 @@ def main(argv: list[str] | None = None) -> int:
             xml_path,
             args.node,
             region=args.region,
-            resize=args.resize,
             zlib_level=args.zlib_level,
         )
     except Exception as exc:  # noqa: BLE001 - CLI should show a concise error.

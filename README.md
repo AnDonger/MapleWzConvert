@@ -145,7 +145,7 @@ The output preserves the `.wz` directory and inner `.img` paths, for example
 Pack `.img.xml` files under one `.wz` directory back to raw `.img` files:
 
 ```powershell
-python xml_to_img.py ./out_wz_to_xml/UI.wz ./out_xml_to_img
+python xml_to_img.py ./out_img_to_xml/UI.wz ./out_xml_to_img
 ```
 
 Pack every `.wz` XML directory under a parent directory:
@@ -182,17 +182,16 @@ directory, the script appends `_重复_当前时间戳` before `.png`.
 
 ## Write PNG to XML Canvas
 
-Write a PNG back into one `<canvas>` node's `rawdata` in an exported `.img.xml`
-file:
+Write a PNG back into one `<canvas>` node in an exported `.img.xml` file:
 
 ```powershell
-python png_to_xml_canvas.py ./ai_test_data/202608311.png ./out_wz_to_xml/UI.wz/StatusBar.img.xml base/backgrnd
+python png_to_xml_canvas.py ./ai_test_data/20260831_10.png ./out_img_to_xml/UI.wz/StatusBar.img.xml base/backgrnd
 ```
 
-The script keeps the XML file in place and only changes the target canvas start
-tag's `rawlength` and `rawdata` attributes. By default, the PNG size must match
-the canvas `width` and `height`; pass `--resize` if you explicitly want the PNG
-scaled to that canvas size.
+The script keeps the XML file in place and changes only the target canvas start
+tag's `width`, `height`, `rawlength`, and `rawdata` attributes. It uses the
+PNG's actual width and height when encoding canvas data; it does not scale the
+PNG to the old canvas size.
 
 ## Replace English XML Text with Chinese XML Text
 
